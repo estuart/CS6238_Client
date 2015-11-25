@@ -1,114 +1,199 @@
+# coding=utf-8
 import requests
-import json
-import datetime
 import sys
 
-def print_response(*args):
-    # For successful API call, response code will be 200 (OK)
-    for response in args:
-        print "Content" + str(response.content)
-        if response.ok:
-            print "HERE"
-            # Loading the response data into a dict variable
-            # json.loads takes in only binary or string variables so using content to fetch binary content
-            # Takes a Json file and converts into python data structure (dict or list, depending on JSON)
-            if response.content:
-                print response.status_code
-                j_data = json.loads(response.content)
-                for key in j_data:
-                    print key + " : " + j_data[key]
+
+class Client:
+    # Root url of our API
+    # url = http://52.22.45.83
+    # BASE_URL = "http://localhost:8080/s2dr/"
+    BASE_URL = "https://localhost:8443/s2dr/"
+
+    URLS = {'login': BASE_URL + "login",
+            'personal': BASE_URL + "personal",
+            'upload': BASE_URL + "upload/",
+            'download': BASE_URL + "document/",
+            'logout': BASE_URL + "logout/",
+            }
+
+    def __init__(self, username, password):
+        self.username = username
+        self.password = password
+        self.session = requests.Session()
+        # TODO Remove this once certs are figured out
+        self.verify = False
+
+    def login(self):
+        try:
+            login_request = self.session.post(url=self.URLS['login'],
+                                              files=dict(username=self.username, password=self.password),
+                                              verify=self.verify)
+            return login_request
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
+
+    def upload(self, file_path, filename, security_flag):
+        try:
+            # Create a dict with the upload parameters as key value pairs
+            _files = {'document': open(file_path, 'rb'), "documentName": filename, "securityFlag": security_flag}
+            # I pass a files dict as a way to force request lib to send form-data instead of www-encoded-form data
+            upload_request = self.session.post(url=self.URLS['upload'], files=_files, verify=self.verify)
+            return upload_request
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
+
+    def download(self, document_id, filename):
+        try:
+            download_request = self.session.get(url=self.URLS['download'] + str(document_id), stream=True, verify=self.session)
+            if download_request.status_code == 200:
+                try:
+                    with open(str(filename), 'wb') as f:
+                        for chunk in download_request:
+                            f.write(chunk)
+                except (IOError, requests.RequestException) as e:
+                    print "I/O error({0}): {1}".format(e.errno, e.strerror)
             else:
-                print response.status_code
-                print "<No Content>"
-        else:
-            # If response code is not ok (200), print the resulting http error code with description
-            response.raise_for_status()
+                print "status:" + str(download_request.status_code)
+
+            return download_request
+
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
+
+    def delegate(self):
+        # TODO Implement delegate function
+        pass
+
+    def logout(self):
+        try:
+            logout_request = self.session.post(self.URLS['logout'], verify=self.verify)
+            return logout_request
+        except requests.RequestException as e:
+            print e
+            print "HERE"
+            sys.exit(1)
+
+# Place holders for the different test scenarios we have to run.
 
 
-def login(username, password, session):
-    _s = session
-    try:
-        login_request = _s.post(url=urls['login'], files=dict(username='estuart', password='password'), verify=False)
-        return login_request
-
-    except requests.RequestException as e:
-        print e
-        sys.exit(1)
-
-
-def upload(filepath, filename, security_flag, session):
-    _s = session
-    try:
-        # Create a dict with the upload parameters as key value pairs
-        _files = {'document': open(filepath, 'rb'), "documentName": filename, "securityFlag": security_flag}
-        # I pass a files dict as a way to force request lib to send form-data instead of www-encoded-form data
-        upload_request = _s.post(url=urls['upload'], files=_files, verify=False)
-
-        return upload_request
-
-    except requests.RequestException as e:
-        print e
-        sys.exit(1)
+def test1():
+    """
+    Test Case: Checking-in with INTEGRITY security flag
+        -Initialize session as client_0
+        -Check in document "0.txt" with INTEGRITY flag
+        -Show where the checked-in document and its signature will be located on the server
+        -Cant really show this here, will include in README
+    :returns: checkin result
+    """
+    pass
 
 
-def download(document_id, session):
-    _s = session
-    try:
-        download_request = _s.get(url=urls['download'] + str(document_id), stream=True, verify=False)
-        if download_request.status_code == 200:
-            try:
-                with open("download_" + str(datetime.datetime.now()), 'wb') as f:
-                    for chunk in download_request:
-                        f.write(chunk)
-            except (IOError, requests.RequestException) as e:
-                print "I/O error({0}): {1}".format(e.errno, e.strerror)
-        else:
-            print "status:" + str(download_request.status_code)
-
-        return download_request
-
-    except requests.RequestException as e:
-        print e
-        sys.exit(1)
+def test2():
+    """
+    Test Case: Checking-out a document as its owner
+        -Using the same session, check out the document we just uploaded
+        -Store retrieved file as 0_copy.txt
+    :returns checkout result
+    """
+    pass
 
 
-def logout(session):
-    _s = session
-    try:
-        logout_request = _s.post(urls['logout'], verify=False)
-        return logout_request
-    except requests.RequestException as e:
-        print e
-        sys.exit(1)
+def test3():
+    """
+    Test Case: Checking-out a document as a user without access permission
+        -Initialize a session with the server as the second client (client_1) and check
+         out the document "0.txt" and attempt to store it as "0_copy.txt"
+        -This should fail
+    :returns: checkout result
+    """
+    pass
 
-# Root url of our API
-# url = http://52.22.45.83
-#BASE_URL = "http://localhost:8080/s2dr/"
-BASE_URL = "https://localhost:8443/s2dr/"
-urls = {'login': BASE_URL + "login",
-        'personal': BASE_URL + "personal",
-        'upload': BASE_URL + "upload/",
-        'download': BASE_URL + "document/",
-        'logout': BASE_URL + "logout/",
-        }
+
+def test4():
+    """
+    Test Case: Safe Deletion
+        -Using the first session, safely delete "0.txt"
+        -Then attempt to check it out again and store as "0_copy2.txt
+    :returns: delete result, checkout result
+    """
+    pass
+
+
+def test5():
+    """
+    Test Case: Checking-in and Checking-out with CONFIDENTIALITY security flag
+        -Using the first session, check in a second document "1.txt" with CONFIDENTIALITY
+        -In readme show where the server copy of "1.txt" is located (needs to be encrypted)
+        -Using same session check out second document and store as "1_copy.txt"
+        -Terminate the first session
+    :returns: checkin result, checkout result, session termination result
+    """
+    pass
+
+
+def test6():
+    """
+    Test Case: Updating a Document
+        -Restart the first session
+        -Checkin the second document "1.txt" with CONFIDENTIALITY|INTEGRITY flag
+        -Verify the signature of the encrypted copy
+        -Checkout "1.txt" and store it as "1_copy2.txt"
+    :returns: checkin result, verify result, checkout result
+    """
+    pass
+
+
+def test7():
+    """
+    Test Case: Checking-in & Checking-out delegation without propogation
+        -Using the first session, delegate("1.txt", "client_1",30,checking-in|checking-out, false)
+        -Using the second session(client 1) checkout "1.txt" and store it as "1_copy.txt"
+        -Using the second session, check in a different file as "1.txt"
+        -Using the second session, delegate("1.txt", "client_2", 30, checking-in|checking-out, false)
+        -Initialize a session as the third client (client_2) checkout the document"1.txt" and store it as "1_copy.txt"
+        -After the delegation expires, using the second session (client_1), check out "1.txt"
+         and store it as "1_copy2.txt"
+        -Using the first session, check out "1.txt" and store it as "1_copy3.txt"
+    :return:
+    """
+    pass
+
+
+def test8():
+    """
+    Test Case: Checking-out delegation with propogation
+        -Using the first session, delegate(“1.txt”, “client_1”, 30, checking-out, True). The delegation timeout should
+         be 30 seconds.
+        -Using the second session, delegate(“1.txt”, “client_2”, 60, checking-out, False). The delegation
+         timeout should be 60 seconds.
+        -Using the third session (client_2), check out “1.txt” and store it as “1_copy2.txt”.
+        -After the 30-second delegation made by the owner expires, using the third session (client_2),
+         check out “1.txt” and store it as “1_copy3.txt”.
+        -After the 60-second delegation made by the second client expires, using the third session (client_2),
+         check out “1.txt” and store it as “1_copy4.txt”.
+        -Terminate all sessions
+
+    :return:
+    """
+    pass
 
 # TODO: Add support for using our CA
 # TODO: Remove this line after CA thing is figured out
+# This silences annoying SSL warning for using a self signed cert
 requests.packages.urllib3.disable_warnings()
 
-# Create a session object to handle our session.
-s = requests.session()
-#with requests.session() as s:
-print urls['login']
-# I pass a files dict as a way to force request libs to send form-data instaed www-encoded-form data
 
-login = login("estuart", "password", s)
-print "Login: "+str(login.status_code)
-upload = upload("classNotes.rtf", "classNotes11", "NONE", s)
-print "Upload: "+str(upload.status_code)
-download = download(1, s)
-print "download: "+str(download.status_code)
-logout = logout(s)
-print "logout: "+str(logout.status_code)
+evan = Client('estuart', 'password')
+evan.login()
+evan.upload('test1.txt', 'testing1.txt', 'NONE')
+evan.download(1, 'test1_copy.txt')
+evan.logout()
 
-
+mike = Client('mpuckett', 'password')
+mike.login()
+mike.upload('test2.txt', 'test2.txt', 'NONE')
+mike.download(2, 'test2_copy.txt')
+mike.logout()
