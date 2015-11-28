@@ -16,18 +16,18 @@ class Client:
             'logout': BASE_URL + "logout/",
             }
 
-    def __init__(self, username, password):
-        self.username = username
-        self.password = password
+    def __init__(self, cert, key):
         self.session = requests.Session()
         # TODO Remove this once certs are figured out
-        self.verify = False
+        self.cert = cert
+        self.key = key
+
+    def __str__(self):
+        return 'Client={0}, Cert={1}, Key={2}'.format(self.session, self.cert, self.key)
 
     def login(self):
         try:
-            login_request = self.session.post(url=self.URLS['login'],
-                                              files=dict(username=self.username, password=self.password),
-                                              verify=self.verify)
+            login_request = self.session.post(url=self.URLS['login'], cert=(self.cert, self.key), verify=False)
             return login_request
         except requests.RequestException as e:
             print e
@@ -38,7 +38,7 @@ class Client:
             # Create a dict with the upload parameters as key value pairs
             _files = {'document': open(file_path, 'rb'), "documentName": filename, "securityFlag": security_flag}
             # I pass a files dict as a way to force request lib to send form-data instead of www-encoded-form data
-            upload_request = self.session.post(url=self.URLS['upload'], files=_files, verify=self.verify)
+            upload_request = self.session.post(url=self.URLS['upload'], files=_files, cert=(self.cert, self.key), verify=False)
             return upload_request
         except requests.RequestException as e:
             print e
@@ -46,7 +46,7 @@ class Client:
 
     def download(self, document_id, filename):
         try:
-            download_request = self.session.get(url=self.URLS['download'] + str(document_id), stream=True, verify=self.session)
+            download_request = self.session.get(url=self.URLS['download'] + str(document_id), stream=True, cert=(self.cert, self.key), verify=False)
             if download_request.status_code == 200:
                 try:
                     with open(str(filename), 'wb') as f:
@@ -69,11 +69,10 @@ class Client:
 
     def logout(self):
         try:
-            logout_request = self.session.post(self.URLS['logout'], verify=self.verify)
+            logout_request = self.session.post(self.URLS['logout'], cert=(self.cert, self.key), verify=False)
             return logout_request
         except requests.RequestException as e:
             print e
-            print "HERE"
             sys.exit(1)
 
 # Place holders for the different test scenarios we have to run.
@@ -186,14 +185,14 @@ def test8():
 requests.packages.urllib3.disable_warnings()
 
 
-evan = Client('estuart', 'password')
+evan = Client('certs/s2drClient1.cert.pem', 'keys/s2drClient1.key.pem')
 evan.login()
-evan.upload('test1.txt', 'testing1.txt', 'NONE')
-evan.download(1, 'test1_copy.txt')
+evan.upload('files/test1.txt', 'testing1.txt', 'NONE')
+evan.download("testing1.txt", 'downloads/test1_copy.txt')
 evan.logout()
 
-mike = Client('mpuckett', 'password')
+mike = Client('certs/s2drClient2.cert.pem', 'keys/s2drClient2.key.pem')
 mike.login()
-mike.upload('test2.txt', 'test2.txt', 'NONE')
-mike.download(2, 'test2_copy.txt')
+mike.upload('files/test2.txt', 'test2.txt', 'NONE')
+mike.download('test2.txt', 'downloads/test2_copy.txt')
 mike.logout()
