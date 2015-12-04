@@ -3,6 +3,17 @@ import requests
 import sys
 
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
 class Client:
     # Root url of our API
     # url = http://52.22.45.83
@@ -14,6 +25,7 @@ class Client:
             'upload': BASE_URL + "upload/",
             'download': BASE_URL + "document/",
             'logout': BASE_URL + "logout/",
+            'delete': BASE_URL + "document/"
             }
 
     def __init__(self, cert, key):
@@ -55,8 +67,8 @@ class Client:
                 except (IOError, requests.RequestException) as e:
                     print "I/O error({0}): {1}".format(e.errno, e.strerror)
             else:
-                print "status:" + str(download_request.status_code)
-
+                # print "status:" + str(download_request.status_code)
+                pass
             return download_request
 
         except requests.RequestException as e:
@@ -66,6 +78,14 @@ class Client:
     def delegate(self):
         # TODO Implement delegate function
         pass
+
+    def delete(self, document_id):
+        try:
+            delete_request = self.session.delete(url=self.URLS['delete'] + str(document_id), cert=(self.cert, self.key), verify=False)
+            return delete_request
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
 
     def logout(self):
         try:
@@ -78,7 +98,20 @@ class Client:
 # Place holders for the different test scenarios we have to run.
 
 
-def test1():
+def printOut(test_num, status, message=""):
+    if status is "ERROR":
+        print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + bcolors.FAIL + "[**ERROR**] " + bcolors.ENDC + message
+    if status is "SUCCESS":
+        print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + bcolors.OKGREEN + "[SUCCESS]" + bcolors.ENDC
+    if status is "FAILED":
+        print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + bcolors.FAIL + "[FAILED] " + bcolors.ENDC
+    if status is "LOG":
+        print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + message
+    if status is "HEADER":
+        print bcolors.HEADER + "\n[Test " + str(test_num) + "]" + bcolors.ENDC
+
+
+def test1(client_0):
     """
     Test Case: Checking-in with INTEGRITY security flag
         -Initialize session as client_0
@@ -87,20 +120,43 @@ def test1():
         -Cant really show this here, will include in README
     :returns: checkin result
     """
-    pass
+    printOut(1, "HEADER")
+    printOut(1, "LOG", "Attempting to initialize session for client_0")
+    client_0.login()
+    printOut(1, "LOG", "Session initialized as client_0")
+    printOut(1, "LOG", "Attempting to check in document '0.txt' with INTEGRITY flag set")
+    request = client_0.upload('files/0.txt', '0.txt', 'INTEGRITY')
+
+    if request.status_code == 201:
+        result = True
+        printOut(1, "LOG", "Upload of '0.txt' is successful")
+        return result, client_0
+    else:
+        result = False
+        printOut(1, "ERROR", "Upload of '0.txt' failed")
+        return result, client_0
 
 
-def test2():
+def test2(client_0):
     """
     Test Case: Checking-out a document as its owner
         -Using the same session, check out the document we just uploaded
         -Store retrieved file as 0_copy.txt
     :returns checkout result
     """
-    pass
+    printOut(2, "HEADER")
+    printOut(2, "LOG", "Attempting to download 0.txt as 0_copy.txt")
+    request = client_0.download('0.txt', "files/0_copy.txt")
+    if request.status_code is 200:
+        printOut(2, "LOG", "Download of '0_copy.txt' successful")
+        result = True
+    else:
+        printOut(2, "ERROR", "Download of '0_copy.txt' failed")
+        result = False
+    return result
 
 
-def test3():
+def test3(client_1):
     """
     Test Case: Checking-out a document as a user without access permission
         -Initialize a session with the server as the second client (client_1) and check
@@ -108,18 +164,44 @@ def test3():
         -This should fail
     :returns: checkout result
     """
-    pass
+    printOut(3, "HEADER")
+    printOut(3, "log", "Attempting to initialize session for client_1")
+    client_1.login()
+    printOut(3, "LOG", "Session initialized as client_1")
+    printOut(3, "LOG", "Attempting to download 0.txt as client_1")
+    request = client_1.download("0.txt", "files1/0_copy.txt")
+    if request.status_code == 200:
+        print "[Test 3] Download of 0.txt as 0_copy.txt successful"
+        result = True
+    else:
+        printOut(3, "ERROR", "[Insufficient Permissions] Download of 0.txt failed")
+        result = False
+
+    return result
 
 
-def test4():
+def test4(client_0):
     """
     Test Case: Safe Deletion
         -Using the first session, safely delete "0.txt"
         -Then attempt to check it out again and store as "0_copy2.txt
     :returns: delete result, checkout result
     """
-    pass
-
+    printOut(4, "HEADER")
+    printOut(4, "LOG", "Attempting to delete '0.txt' as client_0")
+    request = client_0.delete("0.txt")
+    if request.status_code == 200:
+        printOut(4, "LOG", "Secure deletion of '0.txt' successful")
+    else:
+        printOut(4, "ERROR", "Secure delection of '0.txt' failed")
+        return False
+    request = client_0.download("0.txt", "files/0_copy2.txt")
+    if request.status_code == 200:
+        printOut(4, "LOG", "Download of 0.txt is successful")
+    else:
+        printOut(4, "ERROR", "Download of 0.txt failed, status code: "+ str(request.status_code))
+        return False
+    return True
 
 def test5():
     """
@@ -184,15 +266,41 @@ def test8():
 # This silences annoying SSL warning for using a self signed cert
 requests.packages.urllib3.disable_warnings()
 
+# Conducting test 1
+client_0 = Client('certs/s2drClient0.cert.pem', 'keys/s2drClient0.key.pem')
+test1_result, client_0 = test1(client_0)
+if test1_result is True:
+    printOut(1, "SUCCESS")
+else:
+    printOut(1, "FAILED")
 
-evan = Client('certs/s2drClient1.cert.pem', 'keys/s2drClient1.key.pem')
-evan.login()
-evan.upload('files/test1.txt', 'testing1.txt', 'NONE')
-evan.download("testing1.txt", 'downloads/test1_copy.txt')
-evan.logout()
+# Conducting test 2
+test2_result = test2(client_0)
+if test2_result is True:
+    printOut(2, "SUCCESS")
+else:
+    printOut(2, "FAILED")
 
-mike = Client('certs/s2drClient2.cert.pem', 'keys/s2drClient2.key.pem')
-mike.login()
-mike.upload('files/test2.txt', 'test2.txt', 'NONE')
-mike.download('test2.txt', 'downloads/test2_copy.txt')
-mike.logout()
+# Conducting test 3
+client_1 =Client('certs/s2drClient1.cert.pem', 'keys/s2drClient1.key.pem')
+test3_result = test3(client_1)
+if test3_result is True:
+    printOut(3, "SUCCESS")
+else:
+    printOut(3, "FAILED")
+
+# Conducting test 4
+test4_result = test4(client_0)
+if test4_result is True:
+    printOut(4, "SUCCESS")
+else:
+    printOut(4, "FAILED")
+
+# TODO: Make sure to logout clients as the test cases dictate
+client_0.logout()
+
+# mike = Client('certs/s2drClient2.cert.pem', 'keys/s2drClient2.key.pem')
+# mike.login()
+# mike.upload('files/test2.txt', 'test2.txt', 'NONE')
+# mike.download('test2.txt', 'downloads/test2_copy.txt')
+# mike.logout()
