@@ -1,6 +1,10 @@
 # coding=utf-8
 import requests
 import sys
+import hashlib
+import time
+
+from OpenSSL import crypto
 
 
 class bcolors:
@@ -14,10 +18,21 @@ class bcolors:
     UNDERLINE = '\033[4m'
 
 
+class dtime:
+    #Change to smaller numbers for easier testing (3000, 6000)
+    THIRTY = 30000
+    SIXTY = 60000
+    SLEEP30 = 30
+    SLEEP60 = 60
+
+class users:
+    CLIENT_0 = "evan.stuart@gtri.gatech.edu"
+    CLIENT_1 = "michael.puckett@gtri.gatech.edu"
+    CLIENT_2 = "bobs.burgers@gtri.gatech.edu"
+
 class Client:
     # Root url of our API
-    # url = http://52.22.45.83
-    # BASE_URL = "http://localhost:8080/s2dr/"
+    #BASE_URL = "https://52.22.45.83:8443/s2dr/"
     BASE_URL = "https://localhost:8443/s2dr/"
 
     URLS = {'login': BASE_URL + "login",
@@ -25,7 +40,9 @@ class Client:
             'upload': BASE_URL + "upload/",
             'download': BASE_URL + "document/",
             'logout': BASE_URL + "logout/",
-            'delete': BASE_URL + "document/"
+            'delete': BASE_URL + "document/",
+            'delegate': BASE_URL + "document/",
+            'signature': "/signature"
             }
 
     def __init__(self, cert, key):
@@ -45,10 +62,15 @@ class Client:
             print e
             sys.exit(1)
 
-    def upload(self, file_path, filename, security_flag):
+# security flags is a comma delimited list of flags
+    def upload(self, file_path, filename, security_flags):
+        signature = self.sign(file_path)
         try:
             # Create a dict with the upload parameters as key value pairs
-            _files = {'document': open(file_path, 'rb'), "documentName": filename, "securityFlag": security_flag}
+            _files = {'document': open(file_path, 'rb'),
+                      "documentName": filename,
+                      "securityFlags": security_flags,
+                      "signature": signature}
             # I pass a files dict as a way to force request lib to send form-data instead of www-encoded-form data
             upload_request = self.session.post(url=self.URLS['upload'], files=_files, cert=(self.cert, self.key), verify=False)
             return upload_request
@@ -58,7 +80,11 @@ class Client:
 
     def download(self, document_id, filename):
         try:
-            download_request = self.session.get(url=self.URLS['download'] + str(document_id), stream=True, cert=(self.cert, self.key), verify=False)
+            download_request = self.session.get(url=self.URLS['download'] + str(document_id),
+                                                stream=True,
+                                                cert=(self.cert, self.key),
+                                                verify=False)
+
             if download_request.status_code == 200:
                 try:
                     with open(str(filename), 'wb') as f:
@@ -75,8 +101,24 @@ class Client:
             print e
             sys.exit(1)
 
-    def delegate(self):
+    def delegate(self, document_id, userName, timeLimitMillis, canPropogate, *permissions):
         # TODO Implement delegate function
+        perms = [x for x in permissions]
+
+        data = {"permissions": permissions,
+                "userName": userName,
+                "timeLimitMillis": timeLimitMillis,
+                "canPropogate": canPropogate
+                }
+        try:
+            delegate_request = self.session.put(url=self.URLS['delegate'] + str(document_id),
+                                                json=data,
+                                                cert=(self.cert, self.key),
+                                                verify=False)
+            return delegate_request
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
         pass
 
     def delete(self, document_id):
@@ -86,6 +128,23 @@ class Client:
         except requests.RequestException as e:
             print e
             sys.exit(1)
+
+    def sign(self, file_path):
+        key = crypto.load_privatekey(crypto.FILETYPE_PEM, open(self.key).read())
+        file_content = open(file_path).read()
+        signature = crypto.sign(key, file_content, 'sha256')
+        return signature
+
+    def get_signature(self, document_id):
+        try:
+            signature_request = self.session.get(url=self.URLS['download'] + str(document_id) + self.URLS['signature'],
+                                                 stream=True,
+                                                 cert=(self.cert, self.key),
+                                                 verify=False)
+        except requests.RequestException as e:
+            print e
+            sys.exit(1)
+        return signature_request
 
     def logout(self):
         try:
@@ -109,7 +168,8 @@ def printOut(test_num, status, message=""):
         print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + message
     if status is "HEADER":
         print bcolors.HEADER + "\n[Test " + str(test_num) + "]" + bcolors.ENDC
-
+    if status is "SLEEP":
+        print bcolors.OKBLUE + "[Test " + str(test_num) + "] " + bcolors.ENDC + bcolors.WARNING + message + bcolors.ENDC
 
 def test1(client_0):
     """
@@ -169,9 +229,9 @@ def test3(client_1):
     client_1.login()
     printOut(3, "LOG", "Session initialized as client_1")
     printOut(3, "LOG", "Attempting to download 0.txt as client_1")
-    request = client_1.download("0.txt", "files1/0_copy.txt")
+    request = client_1.download("0.txt", "downloads/0_copy.txt")
     if request.status_code == 200:
-        print "[Test 3] Download of 0.txt as 0_copy.txt successful"
+        printOut(3, "LOG", "Download of 0.txt as 0_copy.txt successful")
         result = True
     else:
         printOut(3, "ERROR", "[Insufficient Permissions] Download of 0.txt failed")
@@ -203,7 +263,8 @@ def test4(client_0):
         return False
     return True
 
-def test5():
+
+def test5(client_0):
     """
     Test Case: Checking-in and Checking-out with CONFIDENTIALITY security flag
         -Using the first session, check in a second document "1.txt" with CONFIDENTIALITY
@@ -212,10 +273,30 @@ def test5():
         -Terminate the first session
     :returns: checkin result, checkout result, session termination result
     """
-    pass
+    printOut(5, "HEADER")
+    printOut(5, "LOG", "Attempting to check in second document '1.txt' with CONFIDENTIALITY")
+    client_0.upload('files/1.txt', '1.txt', 'CONFIDENTIALITY')
+    printOut(5, "LOG", "Check in of '1.txt' was successful")
+    printOut(5, "LOG", "Attempting to check out '1.txt' and store it as 1_copy.txt")
+    request = client_0.download('1.txt', 'downloads/1_copy.txt')
+    if request.status_code == 200:
+        printOut(5, "LOG", "Download of '1.txt' as '1_copy.txt' successful")
+    else:
+        printOut(5, "ERROR", "Download of '1.txt' as 1_copy.txt' failed")
+        return False
+    printOut(5, "LOG", "Attempting to terminate the first session (Client_0)")
+    request = client_0.logout()
+    if request.status_code ==200:
+        printOut(5, "LOG", "The first session (client_0) terminated successfully")
+    else:
+        printOut(5, "ERROR", "There was an error terminating the firs session (client_0)")
+        return False
+    # If we get to this point return true because we have successfully completed the test
+    return True
 
 
-def test6():
+
+def test6(client_0):
     """
     Test Case: Updating a Document
         -Restart the first session
@@ -224,10 +305,51 @@ def test6():
         -Checkout "1.txt" and store it as "1_copy2.txt"
     :returns: checkin result, verify result, checkout result
     """
-    pass
+    printOut(6, "HEADER")
+    printOut(6, "LOG", "Attempting to restart first session")
+    request = client_0.login()
+    if request.status_code == 200:
+        printOut(6, "LOG", "Restart of first session was successful")
+    else:
+        printOut(6, "ERROR", "Restart of first session (client_0) failed")
+        return False
+    printOut(6, "LOG", "Attempting to checkin second document '1.txt' with CONFIDENTIALITY|INTEGRITY flag")
+    request = client_0.upload('files/1.txt', '1.txt', 'INTEGRITY, CONFIDENTIALITY')
+    if request.status_code == 201:
+        printOut(6, "LOG", "Check in of '1.txt' with INTEGRITY and CONFIDENTIALITY was successful")
+    else:
+        printOut(6, "ERROR", "Check in of '1.txt' failed.")
+        return False
+    printOut(6, "LOG", "Attempting to verify signature of encrypted copy")
+    printOut(6, "LOG", "Fetching the signature of '1.txt' from the server")
+    request = client_0.get_signature("1.txt")
+    server_sig = hashlib.sha256(request.content).hexdigest()
+    if request.status_code == 200:
+        printOut(6, "LOG", "Signature received from the server: " + str(server_sig))
+    else:
+        printOut(6, "ERROR", "Unable to receive signature from server.")
+        return False
+    # Now sign locally and compare to server signature
+    printOut(6, "LOG", "Now generating a signature of '1.txt' locally")
+    local = client_0.sign("files/1.txt")
+    local_sig = hashlib.sha256(local).hexdigest()
+    printOut(6, "LOG", "Signature generated by the client: "+str(local_sig))
+    if local_sig == server_sig:
+        printOut(6, "LOG", "Signature received from the server matches the local generated signature")
+    else:
+        printOut(6, "ERROR", "The signatures do not match.")
+        return False
+    printOut(6, "LOG", "Attempting to check out '1.txt' and store it as 1_copy2.txt")
+    request = client_0.download('1.txt', 'downloads/1_copy2.txt')
+    if request.status_code == 200:
+        printOut(6, "LOG", "Download of '1.txt' as '1_copy2.txt' successful")
+    else:
+        printOut(6, "ERROR", "Download of '1.txt' as 1_copy.txt' failed")
+        return False
+    return True
 
 
-def test7():
+def test7(client_0, client_1, client_2):
     """
     Test Case: Checking-in & Checking-out delegation without propogation
         -Using the first session, delegate("1.txt", "client_1",30,checking-in|checking-out, false)
@@ -240,10 +362,76 @@ def test7():
         -Using the first session, check out "1.txt" and store it as "1_copy3.txt"
     :return:
     """
-    pass
+    result = True
+    printOut(7, "HEADER")
+
+    printOut(7, "LOG", "Delegating from client_0 -> client_1 for 30 seconds: delegate('1.txt', 'client_1',30,checking-in|checking-out, false) using client_0")
+    request = client_0.delegate('1.txt', users.CLIENT_1, dtime.THIRTY, 'false', 'READ', 'WRITE')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Permissions were successfully delegated to client_1 from client_0")
+    else:
+        printOut(7, "ERROR", "Permission delegation failed!")
+        result = False
+
+    printOut(7, "LOG", "Using the second session (client 1) attempting to checkout '1.txt' and store it as '1_copy.txt'")
+    request = client_1.download('1.txt', 'downloads_1/1_copy.txt')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Client 1 successfully checked out '1.txt' as 1_copy.txt")
+    else:
+        printOut(7, "ERROR", "Client 1 was unable to checkout '1.txt' as 1_copy.txt'")
+        result = False
+
+    printOut(7, "LOG", "Using client_1 checking in a different file as '1.txt'")
+    request = client_1.upload('files/not_1.txt', '1.txt', 'INTEGRITY')
+    if request.status_code == 201:
+        printOut(7, "LOG", "Client 1 successfully checked in 'not_1.txt' as 1.txt")
+    else:
+        printOut(7, "ERROR", "Client 1 was unable to checkin 'not_1.txt' as '1.txt'")
+        result = False
+
+    printOut(7, "LOG", "Delegating from client_1 -> client_2 for 30 seconds: delegate('1.txt', 'client_2', 30, checking-in|checking-out, false)")
+    request = client_1.delegate('1.txt', users.CLIENT_2, dtime.THIRTY, 'false', 'READ', 'WRITE')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Permissions were successfully delegated from client_1 -> client_2")
+    else:
+        printOut(7, "ERROR", "Permission delegation failed!")
+        result = False
+
+    printOut(7, "LOG", "Initializing a third sessions (client_2)")
+    request = client_2.login()
+    if request.status_code == 200:
+        printOut(7, "LOG", "Initialization of third session (client_2) was successful")
+    else:
+        printOut(7, "ERROR", "Initialization of third session (client_2) failed")
+        result = False
+
+    printOut(7, "LOG", "Checking out '1.txt' as client_2 and storing it as 1_copy.txt")
+    request = client_2.download('1.txt', 'downloads_2/1_copy.txt')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Client 2 successfully checked out '1.txt' as 1_copy.txt")
+    else:
+        printOut(7, "ERROR", "Client 2 was unable to checkout '1.txt' as 1_copy.txt'")
+        result = False
+
+    printOut(7, "SLEEP", "NOW SLEEPING FOR 30 SECONDS WAITING FOR DELEGATION TO EXPIRE")
+    time.sleep(dtime.SLEEP30)
+    request = client_1.download('1.txt', 'downloads_1/1_copy2.txt')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Client 1 successfully checked out '1.txt' as 1_copy2.txt")
+    else:
+        printOut(7, "ERROR", "Client 1 was unable to checkout '1.txt' as 1_copy2.txt'")
+        result = False
+    printOut(7, "LOG", "Using the first session client_0, we will check out '1.txt' and store it as '1_copy3.txt'")
+    request = client_0.download('1.txt', 'downloads_0/1_copy3.txt')
+    if request.status_code == 200:
+        printOut(7, "LOG", "Client 0 successfully checked out '1.txt' as 1_copy3.txt")
+    else:
+        printOut(7, "ERROR", "Client 0 was unable to checkout '1.txt' as 1_copy3.txt'")
+        result = False
+    return result
 
 
-def test8():
+def test8(client_0, client_1, client_2):
     """
     Test Case: Checking-out delegation with propogation
         -Using the first session, delegate(“1.txt”, “client_1”, 30, checking-out, True). The delegation timeout should
@@ -259,10 +447,47 @@ def test8():
 
     :return:
     """
-    pass
+    result = True
+    printOut(8, "HEADER")
+    printOut(8, "LOG", "Delegating from client_0 -> client_1 for 30 seconds:  delegate('1.txt', 'client_1', 30, checking-out, true)")
+    request = client_0.delegate('1.txt', users.CLIENT_1, dtime.THIRTY, 'true', 'READ')
+    if request.status_code == 200:
+        printOut(8, "LOG", "Permissions were successfully delegated from client_0 -> client_1 for 30 seconds")
+    else:
+        printOut(8, "ERROR", "Permission delegation failed!")
+        result = False
+    printOut(8, "LOG", "Delegating from client_1 -> client_2 for 60 seconds:  delegate('1.txt', 'client_2', 60, checking-out, false)")
+    request = client_1.delegate('1.txt', users.CLIENT_2, dtime.SIXTY, 'false', 'READ')
+    if request.status_code == 200:
+        printOut(8, "LOG", "Permissions were successfully delegated from client_1 -> client_2 for 60 seconds")
+    else:
+        printOut(8, "ERROR", "Permission delegation failed!")
+        result = False
+    printOut(8, "LOG", "Checking out '1.txt' as client_2 and storing it as 1_copy2.txt")
+    request = client_2.download('1.txt', 'downloads_2/1_copy2.txt')
+    if request.status_code == 200:
+        printOut(8, "LOG", "Client 2 successfully checked out '1.txt' as 1_copy2.txt")
+    else:
+        printOut(8, "ERROR", "Client 2 was unable to checkout '1.txt' as 1_copy2.txt'")
+        result = False
+    printOut(8, "SLEEP", "NOW SLEEPING FOR 30 SECONDS WAITING FOR DELEGATION TO EXPIRE")
+    time.sleep(dtime.SLEEP30)
+    request = client_2.download('1.txt', 'downloads_2/1_copy3.txt')
+    if request.status_code == 200:
+        printOut(8, "LOG", "Client 2 successfully checked out '1.txt' as 1_copy3.txt")
+    else:
+        printOut(8, "ERROR", "Client 2 was unable to checkout '1.txt' as 1_copy3.txt'")
+        result = False
+    printOut(8, "SLEEP", "NOW SLEEPING FOR 60 SECONDS WAITING FOR DELEGATION TO EXPIRE")
+    time.sleep(dtime.SLEEP30)
+    request = client_2.download('1.txt', 'downloads_2/1_copy4.txt')
+    if request.status_code == 200:
+        printOut(8, "LOG", "Client 2 successfully checked out '1.txt' as 1_copy4.txt")
+    else:
+        printOut(8, "ERROR", "Client 2 was unable to checkout '1.txt' as 1_copy4.txt'")
+        result = False
+    return result
 
-# TODO: Add support for using our CA
-# TODO: Remove this line after CA thing is figured out
 # This silences annoying SSL warning for using a self signed cert
 requests.packages.urllib3.disable_warnings()
 
@@ -296,11 +521,34 @@ if test4_result is True:
 else:
     printOut(4, "FAILED")
 
-# TODO: Make sure to logout clients as the test cases dictate
-client_0.logout()
+# Conducting test 5
+test5_result = test5(client_0)
+if test5_result is True:
+    printOut(5, "SUCCESS")
+else:
+    printOut(5, "FAILED")
 
-# mike = Client('certs/s2drClient2.cert.pem', 'keys/s2drClient2.key.pem')
-# mike.login()
-# mike.upload('files/test2.txt', 'test2.txt', 'NONE')
-# mike.download('test2.txt', 'downloads/test2_copy.txt')
-# mike.logout()
+# Conducting test 6
+test6_result = test6(client_0)
+if test5_result is True:
+    printOut(6, "SUCCESS")
+else:
+    printOut(6, "FAILED")
+
+# Conducting test 7
+client_2 = Client('certs/s2drClient3.cert.pem', 'keys/s2drClient3.key.pem')
+test7_result = test7(client_0, client_1, client_2)
+if test7_result is True:
+    printOut(7, "SUCCESS")
+else:
+    printOut(7, "FAILED")
+
+# Conducting test 8
+test8_result = test8(client_0, client_1, client_2)
+if test8_result is True:
+    printOut(8, "SUCCESS")
+else:
+    printOut(8, "FAILED")
+
+printOut(8, "SLEEP", "Now closing all sessions!")
+
